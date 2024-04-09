@@ -1,111 +1,137 @@
-###############################################################
+##############################################################
 ## Script to calculate centile values for the ROI values
-## Returns one csv file per roi
 ##
-## Input:
+## Args:
 ## - f_in: full path to input csv file
-## - p_out: full path to output csv file prefix (output folder should exist)
-## - ROIs (optional): comma separated list of ROIs
-##
-## Output:
-##   For each ROI a csv file is created with centile values. Out file is named as "{p_out}_{ROI}"
-##
-## Notes:
-##   - The input csv file should include the columns: "Age,ROI1,ROI2,..."
-##   - If ROIs arg is not provided, all columns other than the Age column is considered as an ROI column
-##   - The resolution of the output (step size for age and step size for centiles) is hardcoded (see below)
-##       Users need to edit it to get output with different resolution
+##    - first column is used as the reference column
+##    - centiles are calculated for all remaining columns 
+## - f_out: full path to output csv
+## - cent_vals: centile values to calculate (example: 25,50,75)
+## - bin_size: bin size for the reference variable (example: 1)
 ##
 ## Contact:
-## guray.erus@pennmedicine.upenn.edu , 07/11/2023
+## guray.erus@pennmedicine.upenn.edu , 04/18/2024
 ##
 
-##
-
+## Required packages
 if (!require(gamlss)) {
-
   install.packages('gamlss')
-
 }
-
 library(gamlss) # lms()
+library('getopt')
 
-# Define the expected number of arguments
-expected_args <- 4
+## Script was creating Rplots.pdf file - fix to bypass this behavior
+pdf(NULL)
 
-# Check if the correct number of arguments is provided
-args <- commandArgs(trailingOnly <- TRUE)
-length(args)
-if (length(args) < expected_args) {
-  print('Usage: Rscript rois_to_centiles [in_file_name] [out_file_prefix] [ROIs (comma separated list of ROIs)] [cent_vals (comma separated list of centile values)] [age_step]', )
-  stop("Incorrect number of arguments. Please provide ", expected_args, " arguments.")
+## Set script name (FIXME: hard-coded for now)
+scr_name="util_calc_centiles.r"
+
+## Help function
+print_help <- function() {
+  cat("Script to calculate centile values for the input data\n")
+  cat("  First column of the input file is the ID column and it's discarded (example: MRID)\n")
+  cat("  First column of the input file is the reference value (example: Age)\n")
+  cat("  Other columns of the input file are variables to calculate centiles (example: ROI1, ROI2, ...)\n\n")
+  cat("Usage: Rscript ", scr_name, " [-h] -i input_csv -o output_csv\n")
+  cat("  -i, --in_csv (str)  : Path to input CSV file (REQUIRED)\n")
+  cat("  -o, --out_csv (str) : Path to output CSV file (REQUIRED)\n")
+  cat("  -c, --cent_vals (int,...) : Comma-separated centile values (OPTIONAL, default: 25,50,75)\n")
+  cat("  -b, --bin_size  (int)  : Bin size for the reference variable (OPTIONAL, default: 1)\n")
+  cat("  -v, --verbose          : Display more verbose messages (OPTIONAL)\n")  
+  cat("  -h, --help             : Display this help message (OPTIONAL)\n")
+  cat("\n")
+  cat("Examples:\n")
+  cat("# Calculate Age centiles at 5 different centile values with 2 year age bins\n")
+  cat("Given in.csv with columns:  Age,Var1,Var2,...\n")
+  cat("> ", scr_name, " -i in.csv -o out.csv -c 5,25,50,75,95 -b 2\n")
+  cat("\n")
+  quit(status = 0)
 }
 
-# Retrieve arguments
-f_in <- args[1]
-f_out <- args[2]
-sel_rois <- strsplit(args[3], ",")[[1]]
-cent_vals <- as.numeric(strsplit(args[4], ",")[[1]])
-age_step <- as.numeric(args[5])
+## Get options 
+library(getopt)
+spec = matrix(c(
+    'verbose', 'v', 2, "integer",
+    'in_csv','i',1,"character",
+    'out_csv','o',1,"character",
+    'cent_vals','c',1,"character",
+    'bin_size','b',1,"integer",  
+    'help','h',0,"logical"
+), byrow=TRUE, ncol=4)
+opt = getopt(spec)
 
-# # # f_in <- '../../output/test_step2_mergeData/NiChart_SelVars.csv'
-# # # f_out <- '../../output/test_step2_mergeData/centiles/NiChart_SelVars_centiles'
-# # # sel_rois <- strsplit('ICV,TBR,GM,WM,VN,HippoL,ThalL', ",")[[1]]
-# # # cent_vals <- as.numeric(strsplit('10,25,50,75,90', ",")[[1]])
-# # # age_step <- 1
+## Print help message
+if (!is.null(opt$help)) {
+    print_help()
+}
 
-# Print arguments
-print('Running with arguments:')
-cat(' Input file: ', f_in, '\n')
-cat(' Output file: ', f_out, '\n')
-cat(' Sel ROIs: ', sel_rois, '\n')
-cat(' Centile values: ', cent_vals, '\n')
-cat(' Age step: ', age_step, '\n')
+## Set default options
+if (is.null(opt$cent_vals)) opt$cent_vals <- "25,50,75"
+if (is.null(opt$bin_size)) opt$bin_size <- 1
+if (is.null(opt$verbose)) opt$verbose <- FALSE
 
-## Read data
-df <- read.csv(f_in)
+## Check for required arguments
+if (is.null(opt$in_csv) | is.null(opt$out_csv)) {
+    print_help()
+    stop("Missing required arguments ...")
+}
+
+## Process centile values (convert comma-separated string to numeric vector)
+opt$cent_vals <- as.numeric(strsplit(opt$cent_vals, ",")[[1]])
+
+## Print args 
+if (opt$verbose) {
+    print('Running with arguments:')
+    cat(' Input file: ', opt$in_csv, '\n')
+    cat(' Output file: ', opt$out_csv, '\n')
+    cat(' Centile values: ', opt$cent_vals, '\n')
+    cat(' Bin size: ', opt$bin_size, '\n')
+}
+
+## Read data and detect variables
+df <- read.csv(opt$in_csv)
 names(df) <- make.names(names(df))
-roi_cols <- names(df)[startsWith(names(df), 'ROI')]
+ref_var <- names(df)[[2]]
+cent_vars <- tail(names(df), -2L)
 
-## Get a vector of [min -> max] age
-minAge <- min(df[,'Age'])
-maxAge <- max(df[,'Age'])
 
-# # # minAge = 30
-# # # maxAge = 50
+## Create out dir
+out_dir <- dirname(opt$out_csv)
+if (!dir.exists(out_dir)) {
+    dir.create(out_dir, recursive=TRUE)
+    if (opt$verbose) {
+        cat("Created dir:", out_dir, "\n")
+    }
+}
 
-vec_age  <- seq(minAge, maxAge, age_step)
+## Get a vector of [min -> max] for the ref var
+minRef <- min(df[,ref_var])
+maxRef <- max(df[,ref_var])
+vec_ref  <- seq(minRef, maxRef, opt$bin_size)
 
-# #######################################
-# ## Subsample data (FIXME this is tmp)
-# set.seed(0126)
-# selind <- sample.int(dim(df)[1], 2000, replace<-FALSE)
-# df  <- df[selind,]
-# #######################################
-
+## Create dataframe with centile values
 df_out <- data.frame()
+for (cent_var in cent_vars) {
+  cat('Calculating centile values for:',cent_var,'**', '\n')
 
-for (sel_roi in sel_rois) {
-  cat('Calculating centile values for:',sel_roi,'**', '\n')
-
-  ## Select input roi var
-  df_sel <- df[,c('Age', sel_roi)]
-  
-  names(df_sel) <- c('Age','ROI')
+  ## Select input var
+  df_sel <- df[,c(ref_var, cent_var)]
+  names(df_sel) <- c('RefVar','CentVar')
 
   ## Calculate centile model
-  m0 <- lms(ROI, Age, families = c("BCCGo","BCPEo","BCTo"), data = df_sel, k = 3, calibration = F, trans.x = F, legend = T, plot = F)
+# #   m0 <- lms(CentVar, RefVar, families = c("BCCGo","BCPEo","BCTo"), data = df_sel, k = 3, calibration = F, trans.x = F, legend = T, plot = F)
+  m0 <- lms(CentVar, RefVar, families = c("BCCGo","BCTo"), data = df_sel, k = 3, calibration = F, trans.x = F, legend = T, plot = F)
   
   ## Extract centile values to matrix
-  centiles(m0, xvar<-df_sel$Age, cent_vals)
-  cent_vals_mat <- centiles.pred(m0, xname = "Age", xvalues = vec_age, cent = cent_vals, plot = T)
+  centiles(m0, xvar<-df_sel$RefVar, opt$cent_vals)
+  cent_vals_mat <- centiles.pred(m0, xname = "RefVar", xvalues = vec_ref, cent = opt$cent_vals, plot = T)
 
   ## Set column names
-  colnames(cent_vals_mat) <- c('Age', paste('centile', cent_vals, sep='_'))
+  colnames(cent_vals_mat) <- c(ref_var, paste('centile', opt$cent_vals, sep='_'))
   
-  ## Add ROI
-  ROI_Name <- rep(sel_roi, nrow(cent_vals_mat))
-  cent_vals_mat <- cbind(ROI_Name, cent_vals_mat)
+  ## Add Var
+  VarName <- rep(cent_var, nrow(cent_vals_mat))
+  cent_vals_mat <- cbind(VarName, cent_vals_mat)
   
   ## Create dataframe
   cent_vals_df <- as.data.frame(cent_vals_mat)
@@ -114,4 +140,4 @@ for (sel_roi in sel_rois) {
 }
 
 ## Save dataframe
-write.csv(df_out, file = f_out, row.names = FALSE)
+write.csv(df_out, file = opt$out_csv, row.names = FALSE)
