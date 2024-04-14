@@ -1,0 +1,15 @@
+[
+    {
+        "field_name": "Age",
+        "min_val": "70",
+        "max_val": "80"
+    },
+    {
+        "field_name": "MRID",
+        "contains": "'OAS'"
+    },
+    {
+        "field_name": "DX_AD",
+        "isin": "['CN','AD']"
+    }
+]

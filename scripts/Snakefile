@@ -1,0 +1,29 @@
+rule select_data:
+    input:
+        demog="../test/OASIS4/input/OASIS4_Demog.csv",
+        mri="../test/OASIS4/input/OASIS4_ROI.csv",
+        filter="../test/OASIS4/input/filter_test.json"
+    output:
+        "../test/output/OASIS4/OASIS4_sel_sample.csv"
+    shell:
+        "python util_select_data.py -i {input.demog} "
+        "-f {input.filter} -o {output}"
+
+rule prep_data:
+    input:
+        sample="../test/output/OASIS4/OASIS4_sel_sample.csv",
+        demog="../test/output/OASIS4/OASIS4_sel_sample.csv",
+        mri="../test/OASIS4/input/OASIS4_ROI.csv",
+    output:
+        "../test/output/OASIS4/OASIS4_centiles_input.csv"
+    shell:
+        "python util_prep_centile_data.py -i1 {input.sample} "
+        "-i2 {input.demog} -i3 {input.mri} -k MRID -d Age -o {output}"
+
+rule calc_centiles:
+    input:
+        "../test/output/OASIS4/OASIS4_centiles_input.csv"
+    output:
+        "../test/output/OASIS4/OASIS4_centiles_output.csv"
+    shell:
+        "bash ./util_calc_centiles.sh -i {input} -o {output}"
